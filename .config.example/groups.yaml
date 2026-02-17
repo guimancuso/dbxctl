@@ -1,0 +1,9 @@
+groups:
+  - name: GRP-WORKSPACE-ADMINS
+    description: "Workspace Administrators"
+  - name: GRP-DATA-ENGINEERS
+    description: "Data Engineering team"
+  - name: GRP-DATA-ANALYSTS
+    description: "Data Analytics team"
+  - name: SVC-AUTOMATION
+    description: "Service principals for automation"

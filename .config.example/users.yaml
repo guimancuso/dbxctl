@@ -1,0 +1,11 @@
+users:
+  - email: alice.johnson@example.com
+    display_name: Alice Johnson
+  - email: bob.smith@example.com
+    display_name: Bob Smith
+  - email: carol.williams@example.com
+    display_name: Carol Williams
+  - email: david.brown@example.com
+    display_name: David Brown
+  - email: emma.davis@example.com
+    display_name: Emma Davis

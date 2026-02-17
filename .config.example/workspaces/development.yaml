@@ -1,0 +1,11 @@
+- group: GRP-WORKSPACE-ADMINS
+  permission: ADMIN
+
+- group: GRP-DATA-ENGINEERS
+  permission: USER
+
+- group: GRP-DATA-ANALYSTS
+  permission: USER
+
+- group: SVC-AUTOMATION
+  permission: ADMIN

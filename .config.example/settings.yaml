@@ -1,0 +1,21 @@
+account:
+  host: "https://accounts.cloud.databricks.com"
+  account_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  profile: "my-databricks-account-profile"
+
+workspaces:
+  - name: "production"
+    host: "https://dbc-xxxxxxxx-xxxx.cloud.databricks.com"
+    profile: "ws-prd-profile"
+
+  - name: "development"
+    host: "https://dbc-yyyyyyyy-yyyy.cloud.databricks.com"
+    profile: "ws-dev-profile"
+
+# Users and groups protected from deletion (in addition to Databricks system ones).
+# Emails or group names that will NEVER be deleted, even if not in the YAML.
+protected_emails:
+  - "admin@example.com"
+
+protected_groups:
+  - "GRP-WORKSPACE-ADMINS"
