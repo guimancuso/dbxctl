@@ -1,3 +1,7 @@
-- bob.smith@example.com
-- carol.williams@example.com
-- david.brown@example.com
+users:
+  - bob.smith@example.com
+  - carol.williams@example.com
+  - david.brown@example.com
+
+groups:
+  - GRP-DATA-ANALYSTS

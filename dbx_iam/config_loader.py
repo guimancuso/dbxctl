@@ -20,6 +20,8 @@ from dbx_iam.models import (
 CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+GROUP_NAME_REGEX = re.compile(r"^[a-zA-Z0-9._-]+$")
+GROUP_MEMBER_PREFIXES = ("GRP-", "ROLE-", "SVC-")
 
 console = Console()
 
@@ -220,42 +222,67 @@ def load_memberships(config_dir: Path = CONFIG_DIR) -> list[MembershipConfig]:
         with open(filepath) as f:
             data = yaml.safe_load(f)
 
-        # Group name extracted from the filename (without extension)
         group_name = filepath.stem
 
         if not data:
             continue
 
-        # Accepts a simple list of emails (group name comes from the file)
+        # Formato novo: {users: [...], groups: [...]}
+        # Formato legado: lista plana de e-mails (compatibilidade retroativa)
         if isinstance(data, list):
-            members = data
+            users = data
+            group_members: list[str] = []
         elif isinstance(data, dict):
-            members = data.get("members", [])
+            users = data.get("users", []) or []
+            group_members = data.get("groups", []) or []
         else:
-            raise ValueError(f"{filepath.name}: invalid format (expected list of emails)")
+            raise ValueError(f"{filepath.name}: invalid format (expected list or dict with 'users'/'groups' keys)")
 
-        if not isinstance(members, list):
-            raise ValueError(f"{filepath.name}: members must be a list")
+        if not isinstance(users, list):
+            raise ValueError(f"{filepath.name}: 'users' must be a list")
+        if not isinstance(group_members, list):
+            raise ValueError(f"{filepath.name}: 'groups' must be a list")
 
-        for j, email in enumerate(members):
+        for j, email in enumerate(users):
             if not isinstance(email, str) or not email.strip():
-                raise ValueError(f"{filepath.name}: member[{j}] is invalid (must be an email)")
+                raise ValueError(f"{filepath.name}: users[{j}] is invalid (must be an email)")
             if not EMAIL_REGEX.match(email):
-                raise ValueError(f"{filepath.name}: invalid email '{email}'")
+                raise ValueError(f"{filepath.name}: users[{j}] invalid email '{email}'")
 
-        # Detect duplicate members in the same file
-        seen: set[str] = set()
-        duplicates: set[str] = set()
-        for email in members:
+        for j, gname in enumerate(group_members):
+            if not isinstance(gname, str) or not gname.strip():
+                raise ValueError(f"{filepath.name}: groups[{j}] is invalid (must be a group name)")
+            if not GROUP_NAME_REGEX.match(gname):
+                raise ValueError(f"{filepath.name}: groups[{j}] invalid group name '{gname}'")
+            if not gname.startswith(GROUP_MEMBER_PREFIXES):
+                raise ValueError(
+                    f"{filepath.name}: groups[{j}] '{gname}' must start with one of: "
+                    + ", ".join(GROUP_MEMBER_PREFIXES)
+                )
+
+        # Detectar duplicatas
+        seen_users: set[str] = set()
+        dup_users: set[str] = set()
+        for email in users:
             lower = email.lower()
-            if lower in seen:
-                duplicates.add(email)
-            seen.add(lower)
-        if duplicates:
-            raise ValueError(f"{filepath.name}: duplicate members: {duplicates}")
+            if lower in seen_users:
+                dup_users.add(email)
+            seen_users.add(lower)
+        if dup_users:
+            raise ValueError(f"{filepath.name}: duplicate users: {dup_users}")
+
+        seen_groups: set[str] = set()
+        dup_groups: set[str] = set()
+        for gname in group_members:
+            lower = gname.lower()
+            if lower in seen_groups:
+                dup_groups.add(gname)
+            seen_groups.add(lower)
+        if dup_groups:
+            raise ValueError(f"{filepath.name}: duplicate groups: {dup_groups}")
 
         memberships.append(
-            MembershipConfig(group=group_name, members=members)
+            MembershipConfig(group=group_name, users=users, groups=group_members)
         )
 
     return memberships
@@ -404,22 +431,25 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
                 f"Group '{group_name}' is not defined in groups.yaml",
             )
 
-        # Accepts a simple list of emails or a dict with 'members' key
+        # Formato novo: {users: [...], groups: [...]}; legado: lista plana de e-mails
         if isinstance(data, list):
             members = data
+            group_members: list = []
         elif isinstance(data, dict):
-            members = data.get("members", [])
+            members = data.get("users", []) or []
+            group_members = data.get("groups", []) or []
         else:
             members = []
+            group_members = []
 
-        if not members:
+        if not members and not group_members:
             result.warning(fname, f"Group '{group_name}' has no members defined")
             continue
 
-        # Does each member exist in users.yaml?
+        # Valida membros do tipo usuário (e-mails)
         for email in members:
             if not isinstance(email, str):
-                result.error(fname, f"Invalid member (not a string): {email}")
+                result.error(fname, f"Invalid user member (not a string): {email}")
                 continue
             if not EMAIL_REGEX.match(email):
                 result.error(fname, f"Invalid email: '{email}'")
@@ -428,6 +458,27 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
                 result.error(
                     fname,
                     f"User '{email}' is not defined in users.yaml",
+                )
+
+        # Valida membros do tipo grupo
+        for gname in group_members:
+            if not isinstance(gname, str):
+                result.error(fname, f"Invalid group member (not a string): {gname}")
+                continue
+            if not GROUP_NAME_REGEX.match(gname):
+                result.error(fname, f"Invalid group name: '{gname}'")
+                continue
+            if not gname.startswith(GROUP_MEMBER_PREFIXES):
+                result.error(
+                    fname,
+                    f"Group member '{gname}' must start with one of: "
+                    + ", ".join(GROUP_MEMBER_PREFIXES),
+                )
+                continue
+            if known_groups and gname.lower() not in known_groups:
+                result.error(
+                    fname,
+                    f"Group '{gname}' is not defined in groups.yaml",
                 )
 
     # 6. Groups defined in groups.yaml without a membership file

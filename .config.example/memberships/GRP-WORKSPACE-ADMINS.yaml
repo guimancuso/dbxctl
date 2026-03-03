@@ -1,1 +1,2 @@
-- alice.johnson@example.com
+users:
+  - alice.johnson@example.com

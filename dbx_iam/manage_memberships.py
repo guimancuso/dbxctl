@@ -18,6 +18,7 @@ def sync_memberships(
 ) -> dict:
     stats = {"added": 0, "removed": 0, "skipped": 0, "errors": 0, "warnings": 0}
     missing_users: list[str] = []
+    missing_groups_as_members: list[str] = []
     missing_groups: list[str] = []
 
     console.print("\n[bold]Synchronizing memberships...[/bold]\n")
@@ -30,11 +31,13 @@ def sync_memberships(
             users_by_email[u.user_name.lower()] = u.id
             users_id_to_email[u.id] = u.user_name
 
-    # Index of existing groups by name
+    # Index of existing groups: name -> id, id -> display_name
     groups_by_name: dict[str, str] = {}
+    groups_id_to_name: dict[str, str] = {}
     for g in client.groups.list():
         if g.display_name and g.id:
             groups_by_name[g.display_name.lower()] = g.id
+            groups_id_to_name[g.id] = g.display_name
 
     for membership in memberships:
         group_lower = membership.group.lower()
@@ -64,8 +67,8 @@ def sync_memberships(
         console.print(f"    Current members: {len(current_member_ids)}")
         desired_member_ids: set[str] = set()
 
-        # --- Add missing members ---
-        for email in membership.members:
+        # --- Adicionar usuários ---
+        for email in membership.users:
             email_lower = email.lower()
 
             if email_lower not in users_by_email:
@@ -83,7 +86,7 @@ def sync_memberships(
                 continue
 
             if dry_run:
-                console.print(f"    [cyan]DRY-RUN[/cyan] Would add: {email}")
+                console.print(f"    [cyan]DRY-RUN[/cyan] Would add user: {email}")
                 stats["added"] += 1
                 continue
 
@@ -105,14 +108,60 @@ def sync_memberships(
                 console.print(f"    [red]ERROR[/red]   {email}: {e}")
                 logger.error("Error adding %s to group %s: %s", email, membership.group, e)
 
+        # --- Adicionar grupos como membros ---
+        for gname in membership.groups:
+            gname_lower = gname.lower()
+
+            if gname_lower not in groups_by_name:
+                console.print(f"    [bold red]WARNING[/bold red] Group '{gname}' does not exist in Databricks")
+                missing_groups_as_members.append(gname)
+                stats["warnings"] += 1
+                continue
+
+            member_group_id = groups_by_name[gname_lower]
+            desired_member_ids.add(member_group_id)
+
+            if member_group_id in current_member_ids:
+                console.print(f"    [yellow]SKIP[/yellow]    {gname} (already a member)")
+                stats["skipped"] += 1
+                continue
+
+            if dry_run:
+                console.print(f"    [cyan]DRY-RUN[/cyan] Would add group: {gname}")
+                stats["added"] += 1
+                continue
+
+            try:
+                client.groups.patch(
+                    id=group_id,
+                    operations=[
+                        iam.Patch(
+                            op=iam.PatchOp.ADD,
+                            value={"members": [{"value": member_group_id}]},
+                        )
+                    ],
+                    schemas=[iam.PatchSchema.URN_IETF_PARAMS_SCIM_API_MESSAGES_2_0_PATCH_OP],
+                )
+                stats["added"] += 1
+                console.print(f"    [green]ADDED[/green]   {gname} (group)")
+            except Exception as e:
+                stats["errors"] += 1
+                console.print(f"    [red]ERROR[/red]   {gname}: {e}")
+                logger.error("Error adding group %s to group %s: %s", gname, membership.group, e)
+
         # --- Remove members not in the list ---
         orphan_ids = current_member_ids - desired_member_ids
         if orphan_ids:
             for orphan_id in orphan_ids:
-                orphan_email = users_id_to_email.get(orphan_id, orphan_id)
+                # Identificar se o orphan é usuário ou grupo para exibição
+                orphan_label = (
+                    users_id_to_email.get(orphan_id)
+                    or groups_id_to_name.get(orphan_id)
+                    or orphan_id
+                )
 
                 if dry_run:
-                    console.print(f"    [cyan]DRY-RUN[/cyan] Would remove: {orphan_email}")
+                    console.print(f"    [cyan]DRY-RUN[/cyan] Would remove: {orphan_label}")
                     stats["removed"] += 1
                     continue
 
@@ -128,17 +177,17 @@ def sync_memberships(
                         schemas=[iam.PatchSchema.URN_IETF_PARAMS_SCIM_API_MESSAGES_2_0_PATCH_OP],
                     )
                     stats["removed"] += 1
-                    console.print(f"    [red]REMOVED[/red] {orphan_email}")
+                    console.print(f"    [red]REMOVED[/red] {orphan_label}")
                 except Exception as e:
                     stats["errors"] += 1
-                    console.print(f"    [red]ERROR[/red]   Removing {orphan_email}: {e}")
+                    console.print(f"    [red]ERROR[/red]   Removing {orphan_label}: {e}")
                     logger.error(
-                        "Error removing %s from group %s: %s", orphan_email, membership.group, e
+                        "Error removing %s from group %s: %s", orphan_label, membership.group, e
                     )
 
         console.print()
 
-    _print_summary(stats, dry_run, missing_users, missing_groups)
+    _print_summary(stats, dry_run, missing_users, missing_groups_as_members, missing_groups)
     return stats
 
 
@@ -146,6 +195,7 @@ def _print_summary(
     stats: dict,
     dry_run: bool,
     missing_users: list[str],
+    missing_groups_as_members: list[str],
     missing_groups: list[str],
 ) -> None:
     table = Table(title="\nSummary - Memberships" + (" (DRY-RUN)" if dry_run else ""))
@@ -155,7 +205,7 @@ def _print_summary(
     table.add_row("Added" if not dry_run else "To add", str(stats["added"]), style="green")
     table.add_row("Removed" if not dry_run else "To remove", str(stats["removed"]), style="red")
     table.add_row("Already members", str(stats["skipped"]), style="yellow")
-    table.add_row("Users not found", str(stats["warnings"]), style="bold red")
+    table.add_row("Members not found", str(stats["warnings"]), style="bold red")
     table.add_row("Errors", str(stats["errors"]), style="red")
 
     console.print(table)
@@ -165,7 +215,12 @@ def _print_summary(
         for email in sorted(set(missing_users)):
             console.print(f"  - {email}")
 
+    if missing_groups_as_members:
+        console.print("\n[bold red]Groups (members) not found in Databricks:[/bold red]")
+        for name in sorted(set(missing_groups_as_members)):
+            console.print(f"  - {name}")
+
     if missing_groups:
-        console.print("\n[bold red]Groups not found in Databricks:[/bold red]")
+        console.print("\n[bold red]Target groups not found in Databricks:[/bold red]")
         for name in sorted(set(missing_groups)):
             console.print(f"  - {name}")

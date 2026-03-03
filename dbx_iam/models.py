@@ -16,7 +16,8 @@ class GroupConfig:
 @dataclass
 class MembershipConfig:
     group: str
-    members: list[str] = field(default_factory=list)
+    users: list[str] = field(default_factory=list)    # e-mails de usuários
+    groups: list[str] = field(default_factory=list)   # nomes de grupos (GRP-, ROLE-, SVC-)
 
 
 @dataclass
