@@ -67,7 +67,7 @@ def sync_memberships(
         console.print(f"    Current members: {len(current_member_ids)}")
         desired_member_ids: set[str] = set()
 
-        # --- Adicionar usuários ---
+        # --- Add users ---
         for email in membership.users:
             email_lower = email.lower()
 
@@ -108,7 +108,7 @@ def sync_memberships(
                 console.print(f"    [red]ERROR[/red]   {email}: {e}")
                 logger.error("Error adding %s to group %s: %s", email, membership.group, e)
 
-        # --- Adicionar grupos como membros ---
+        # --- Add groups as members ---
         for gname in membership.groups:
             gname_lower = gname.lower()
 
@@ -153,7 +153,7 @@ def sync_memberships(
         orphan_ids = current_member_ids - desired_member_ids
         if orphan_ids:
             for orphan_id in orphan_ids:
-                # Identificar se o orphan é usuário ou grupo para exibição
+                # Resolve display name for the orphan (could be a user or a group)
                 orphan_label = (
                     users_id_to_email.get(orphan_id)
                     or groups_id_to_name.get(orphan_id)

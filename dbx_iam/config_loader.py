@@ -227,8 +227,8 @@ def load_memberships(config_dir: Path = CONFIG_DIR) -> list[MembershipConfig]:
         if not data:
             continue
 
-        # Formato novo: {users: [...], groups: [...]}
-        # Formato legado: lista plana de e-mails (compatibilidade retroativa)
+        # New format: {users: [...], groups: [...]}
+        # Legacy format: flat list of emails (backwards compatibility)
         if isinstance(data, list):
             users = data
             group_members: list[str] = []
@@ -260,7 +260,7 @@ def load_memberships(config_dir: Path = CONFIG_DIR) -> list[MembershipConfig]:
                     + ", ".join(GROUP_MEMBER_PREFIXES)
                 )
 
-        # Detectar duplicatas
+        # Detect duplicates
         seen_users: set[str] = set()
         dup_users: set[str] = set()
         for email in users:
@@ -431,7 +431,7 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
                 f"Group '{group_name}' is not defined in groups.yaml",
             )
 
-        # Formato novo: {users: [...], groups: [...]}; legado: lista plana de e-mails
+        # New format: {users: [...], groups: [...]}; legacy: flat list of emails
         if isinstance(data, list):
             members = data
             group_members: list = []
@@ -446,7 +446,7 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
             result.warning(fname, f"Group '{group_name}' has no members defined")
             continue
 
-        # Valida membros do tipo usuário (e-mails)
+        # Validate user members (emails)
         for email in members:
             if not isinstance(email, str):
                 result.error(fname, f"Invalid user member (not a string): {email}")
@@ -460,7 +460,7 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
                     f"User '{email}' is not defined in users.yaml",
                 )
 
-        # Valida membros do tipo grupo
+        # Validate group members
         for gname in group_members:
             if not isinstance(gname, str):
                 result.error(fname, f"Invalid group member (not a string): {gname}")
@@ -482,7 +482,7 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
                 )
 
     # 6. Groups defined in groups.yaml without a membership file
-    #    Groups with SVC- prefix are ignored (service principals, no membership)
+    # Groups with SVC- prefix are skipped (service principals, no membership file expected)
     for g_lower, g_original in known_groups.items():
         if g_original.startswith("SVC-"):
             continue
