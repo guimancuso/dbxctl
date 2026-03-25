@@ -18,6 +18,7 @@ class MembershipConfig:
     group: str
     users: list[str] = field(default_factory=list)    # e-mails de usuários
     groups: list[str] = field(default_factory=list)   # nomes de grupos (GRP-, ROLE-, SVC-)
+    service_principals: list[str] = field(default_factory=list)  # application IDs de service principals
 
 
 @dataclass

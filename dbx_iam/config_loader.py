@@ -21,6 +21,13 @@ CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 GROUP_NAME_REGEX = re.compile(r"^[a-zA-Z0-9._-]+$")
+UUID_REGEX = re.compile(
+    r"^[0-9a-fA-F]{8}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{12}$"
+)
 GROUP_MEMBER_PREFIXES = ("GRP-", "ROLE-", "SVC-")
 
 console = Console()
@@ -227,21 +234,28 @@ def load_memberships(config_dir: Path = CONFIG_DIR) -> list[MembershipConfig]:
         if not data:
             continue
 
-        # New format: {users: [...], groups: [...]}
+        # New format: {users: [...], groups: [...], service_principals: [...]}
         # Legacy format: flat list of emails (backwards compatibility)
         if isinstance(data, list):
             users = data
             group_members: list[str] = []
+            service_principals: list[str] = []
         elif isinstance(data, dict):
             users = data.get("users", []) or []
             group_members = data.get("groups", []) or []
+            service_principals = data.get("service_principals", []) or []
         else:
-            raise ValueError(f"{filepath.name}: invalid format (expected list or dict with 'users'/'groups' keys)")
+            raise ValueError(
+                f"{filepath.name}: invalid format "
+                "(expected list or dict with 'users'/'groups'/'service_principals' keys)"
+            )
 
         if not isinstance(users, list):
             raise ValueError(f"{filepath.name}: 'users' must be a list")
         if not isinstance(group_members, list):
             raise ValueError(f"{filepath.name}: 'groups' must be a list")
+        if not isinstance(service_principals, list):
+            raise ValueError(f"{filepath.name}: 'service_principals' must be a list")
 
         for j, email in enumerate(users):
             if not isinstance(email, str) or not email.strip():
@@ -258,6 +272,16 @@ def load_memberships(config_dir: Path = CONFIG_DIR) -> list[MembershipConfig]:
                 raise ValueError(
                     f"{filepath.name}: groups[{j}] '{gname}' must start with one of: "
                     + ", ".join(GROUP_MEMBER_PREFIXES)
+                )
+
+        for j, application_id in enumerate(service_principals):
+            if not isinstance(application_id, str) or not application_id.strip():
+                raise ValueError(
+                    f"{filepath.name}: service_principals[{j}] is invalid (must be an application ID)"
+                )
+            if not UUID_REGEX.match(application_id):
+                raise ValueError(
+                    f"{filepath.name}: service_principals[{j}] invalid application ID '{application_id}'"
                 )
 
         # Detect duplicates
@@ -281,8 +305,25 @@ def load_memberships(config_dir: Path = CONFIG_DIR) -> list[MembershipConfig]:
         if dup_groups:
             raise ValueError(f"{filepath.name}: duplicate groups: {dup_groups}")
 
+        seen_service_principals: set[str] = set()
+        dup_service_principals: set[str] = set()
+        for application_id in service_principals:
+            lower = application_id.lower()
+            if lower in seen_service_principals:
+                dup_service_principals.add(application_id)
+            seen_service_principals.add(lower)
+        if dup_service_principals:
+            raise ValueError(
+                f"{filepath.name}: duplicate service_principals: {dup_service_principals}"
+            )
+
         memberships.append(
-            MembershipConfig(group=group_name, users=users, groups=group_members)
+            MembershipConfig(
+                group=group_name,
+                users=users,
+                groups=group_members,
+                service_principals=service_principals,
+            )
         )
 
     return memberships
@@ -431,18 +472,21 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
                 f"Group '{group_name}' is not defined in groups.yaml",
             )
 
-        # New format: {users: [...], groups: [...]}; legacy: flat list of emails
+        # New format: {users: [...], groups: [...], service_principals: [...]}; legacy: flat list of emails
         if isinstance(data, list):
             members = data
             group_members: list = []
+            service_principals: list = []
         elif isinstance(data, dict):
             members = data.get("users", []) or []
             group_members = data.get("groups", []) or []
+            service_principals = data.get("service_principals", []) or []
         else:
             members = []
             group_members = []
+            service_principals = []
 
-        if not members and not group_members:
+        if not members and not group_members and not service_principals:
             result.warning(fname, f"Group '{group_name}' has no members defined")
             continue
 
@@ -479,6 +523,20 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
                 result.error(
                     fname,
                     f"Group '{gname}' is not defined in groups.yaml",
+                )
+
+        # Validate service principal members
+        for application_id in service_principals:
+            if not isinstance(application_id, str):
+                result.error(
+                    fname,
+                    f"Invalid service principal member (not a string): {application_id}",
+                )
+                continue
+            if not UUID_REGEX.match(application_id):
+                result.error(
+                    fname,
+                    f"Invalid service principal application ID: '{application_id}'",
                 )
 
     # 6. Groups defined in groups.yaml without a membership file

@@ -49,7 +49,13 @@ def cmd_users(args: argparse.Namespace) -> None:
     settings = load_settings()
     client = get_account_client(settings)
     users = load_users()
-    sync_users(client, users, dry_run=args.dry_run, protected_emails=settings.protected_emails)
+    sync_users(
+        client,
+        users,
+        dry_run=args.dry_run,
+        protected_emails=settings.protected_emails,
+        show_unchanged=args.verbose,
+    )
 
 
 def cmd_groups(args: argparse.Namespace) -> None:
@@ -64,6 +70,7 @@ def cmd_groups(args: argparse.Namespace) -> None:
         memberships=memberships,
         dry_run=args.dry_run,
         protected_groups=settings.protected_groups,
+        show_unchanged=args.verbose,
     )
 
 
@@ -73,7 +80,7 @@ def cmd_members(args: argparse.Namespace) -> None:
     settings = load_settings()
     client = get_account_client(settings)
     memberships = load_memberships()
-    sync_memberships(client, memberships, dry_run=args.dry_run)
+    sync_memberships(client, memberships, dry_run=args.dry_run, show_unchanged=args.verbose)
 
 
 def cmd_workspaces(args: argparse.Namespace) -> None:
@@ -82,7 +89,13 @@ def cmd_workspaces(args: argparse.Namespace) -> None:
     settings = load_settings()
     client = get_account_client(settings)
     assignments = load_workspace_assignments()
-    sync_workspace_assignments(client, assignments, settings, dry_run=args.dry_run)
+    sync_workspace_assignments(
+        client,
+        assignments,
+        settings,
+        dry_run=args.dry_run,
+        show_unchanged=args.verbose,
+    )
 
 
 def cmd_sync(args: argparse.Namespace) -> None:
@@ -105,16 +118,29 @@ def cmd_sync(args: argparse.Namespace) -> None:
         memberships=memberships,
         dry_run=args.dry_run,
         protected_groups=settings.protected_groups,
+        show_unchanged=args.verbose,
     )
 
     console.print("\n[bold]== Step 2/4: Create users ==[/bold]")
-    sync_users(client, users, dry_run=args.dry_run, protected_emails=settings.protected_emails)
+    sync_users(
+        client,
+        users,
+        dry_run=args.dry_run,
+        protected_emails=settings.protected_emails,
+        show_unchanged=args.verbose,
+    )
 
     console.print("\n[bold]== Step 3/4: Reconcile memberships ==[/bold]")
-    sync_memberships(client, memberships, dry_run=args.dry_run)
+    sync_memberships(client, memberships, dry_run=args.dry_run, show_unchanged=args.verbose)
 
     console.print("\n[bold]== Step 4/4: Assign groups to workspaces ==[/bold]")
-    sync_workspace_assignments(client, assignments, settings, dry_run=args.dry_run)
+    sync_workspace_assignments(
+        client,
+        assignments,
+        settings,
+        dry_run=args.dry_run,
+        show_unchanged=args.verbose,
+    )
 
     console.print("\n[bold green]Sync completed.[/bold green]")
 
@@ -127,7 +153,7 @@ def main() -> None:
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
-        help="Enable detailed logging (DEBUG)",
+        help="Enable detailed logging (DEBUG) and show unchanged items",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)

@@ -140,15 +140,29 @@ groups:
 
 ### Membership Files
 
-Located in `config/memberships/`. Each file is named after a group (e.g., `GRP-DATA-ENGINEERS.yaml`) and contains the list of member emails.
+Located in `config/memberships/`. Each file is named after a group (e.g., `GRP-DATA-ENGINEERS.yaml`) and defines its desired members.
 
 ```yaml
 # config/memberships/GRP-DATA-ENGINEERS.yaml
-- john.doe@company.com
-- jane.smith@company.com
+users:
+  - john.doe@company.com
+  - jane.smith@company.com
+
+groups:
+  - GRP-DATA-ANALYSTS
+
+service_principals:
+  - 11111111-2222-3333-4444-555555555555
 ```
 
 The group name is derived from the filename (without `.yaml` extension).
+The legacy format with a flat list of user emails is still supported for backward compatibility.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `users` | No | List of user emails. Each email must exist in `users.yaml`. |
+| `groups` | No | List of group names to include as nested members. Each group must exist in `groups.yaml`. |
+| `service_principals` | No | List of Databricks service principal `application_id` values (UUID format). |
 
 ### Workspace Assignment Files
 
@@ -185,6 +199,7 @@ Checks performed:
 - Duplicate detection (emails, groups, members)
 - Cross-reference: membership emails exist in users.yaml
 - Cross-reference: membership groups exist in groups.yaml
+- Validation: membership service principal application IDs use UUID format
 - Cross-reference: workspace groups exist in groups.yaml
 - Cross-reference: workspace names match settings.yaml
 

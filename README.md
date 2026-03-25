@@ -1,6 +1,6 @@
 # dbxctl
 
-Idempotent CLI for managing users, groups, memberships, and workspace assignments in Databricks Account via SCIM API.
+Idempotent CLI for managing users, groups, service principal memberships, and workspace assignments in Databricks Account via SCIM API.
 
 ## Features
 
@@ -10,6 +10,7 @@ Idempotent CLI for managing users, groups, memberships, and workspace assignment
 - **Cross-validation** -- Catch configuration errors before any API call
 - **Protection mechanism** -- Safeguard system entities and critical accounts from accidental deletion
 - **Granular control** -- Sync users, groups, memberships, or workspaces independently
+- **Mixed memberships** -- Reconcile group members as users, groups, and service principals
 
 ## Quick Start
 

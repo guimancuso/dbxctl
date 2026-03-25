@@ -2,7 +2,6 @@ import logging
 
 from databricks.sdk import AccountClient
 from rich.console import Console
-from rich.table import Table
 
 from dbx_iam.models import GroupConfig, MembershipConfig
 
@@ -32,10 +31,13 @@ def sync_groups(
     memberships: list[MembershipConfig] | None = None,
     dry_run: bool = False,
     protected_groups: list[str] | None = None,
+    show_unchanged: bool = False,
 ) -> dict:
     protected = protected_groups or []
     stats = {"created": 0, "skipped": 0, "deleted": 0, "protected": 0, "errors": 0}
     membership_groups = {m.group.lower() for m in (memberships or [])}
+    changed_creates: list[str] = []
+    changed_deletes: list[str] = []
 
     console.print("\n[bold]Synchronizing groups...[/bold]\n")
 
@@ -48,89 +50,92 @@ def sync_groups(
 
     desired_groups = {g.name.lower() for g in groups}
 
-    console.print(f"  Existing groups in account: {len(existing)}")
-    console.print(f"  Groups defined in YAML:     {len(groups)}\n")
-
-    # --- Create missing groups ---
-    console.print("  [bold]Creation:[/bold]")
-    has_creation = False
     for group_cfg in groups:
         name_lower = group_cfg.name.lower()
 
         if name_lower in existing:
             logger.debug("SKIP: group '%s' already exists", group_cfg.name)
             stats["skipped"] += 1
-            console.print(f"    [yellow]SKIP[/yellow]    {group_cfg.name}")
             continue
 
-        has_creation = True
         if dry_run:
-            console.print(f"    [cyan]DRY-RUN[/cyan] Would create: {group_cfg.name}")
             stats["created"] += 1
+            changed_creates.append(group_cfg.name)
             continue
 
         try:
             client.groups.create(display_name=group_cfg.name)
             stats["created"] += 1
-            console.print(f"    [green]CREATED[/green] {group_cfg.name}")
+            changed_creates.append(group_cfg.name)
         except Exception as e:
             stats["errors"] += 1
             console.print(f"    [red]ERROR[/red]   {group_cfg.name}: {e}")
             logger.error("Error creating group %s: %s", group_cfg.name, e)
 
-    if not has_creation and stats["skipped"] == len(groups):
-        console.print("    All groups already exist.")
-
     # --- Delete groups not in the YAML ---
     orphans = {name: g for name, g in existing.items() if name not in desired_groups}
 
     if orphans:
-        console.print(f"\n  [bold]Removal ({len(orphans)} group(s) not in YAML):[/bold]")
         for name_lower, group_obj in sorted(orphans.items()):
             original_name = existing_original.get(name_lower, name_lower)
             group_id = getattr(group_obj, "id", None)
 
             if _is_protected(name_lower, protected):
                 stats["protected"] += 1
-                console.print(f"    [magenta]PROTECTED[/magenta] {original_name} (system group)")
                 continue
 
             # Warn if the group is still referenced in a membership YAML file
             if name_lower in membership_groups:
                 console.print(
-                    f"    [bold yellow]WARNING[/bold yellow]   Group '{original_name}' has a membership "
+                    f"  [bold yellow]WARNING[/bold yellow]   Group '{original_name}' has a membership "
                     f"file but is not in groups.yaml -- will not be processed"
                 )
 
             if dry_run:
-                console.print(f"    [cyan]DRY-RUN[/cyan] Would delete: {original_name}")
                 stats["deleted"] += 1
+                changed_deletes.append(original_name)
                 continue
 
             try:
                 client.groups.delete(id=group_id)
                 stats["deleted"] += 1
-                console.print(f"    [red]DELETED[/red] {original_name}")
+                changed_deletes.append(original_name)
             except Exception as e:
                 stats["errors"] += 1
                 console.print(f"    [red]ERROR[/red]   Deleting {original_name}: {e}")
                 logger.error("Error deleting group %s: %s", original_name, e)
-    else:
-        console.print("\n  [bold]Removal:[/bold] No orphan groups found.")
+
+    if stats["created"]:
+        label = "to create" if dry_run else "created"
+        console.print(f"  [green]{'PLAN' if dry_run else 'CREATE'}[/green] groups {label}: {stats['created']}")
+    if stats["deleted"]:
+        label = "to delete" if dry_run else "deleted"
+        console.print(f"  [red]{'PLAN' if dry_run else 'DELETE'}[/red] groups {label}: {stats['deleted']}")
+    if stats["protected"]:
+        console.print(f"  [magenta]PROTECTED[/magenta] groups kept: {stats['protected']}")
+    if stats["skipped"] and show_unchanged:
+        console.print(f"  [yellow]UNCHANGED[/yellow] groups already in desired state: {stats['skipped']}")
+    if not any((stats["created"], stats["deleted"], stats["protected"], stats["errors"])) and not show_unchanged:
+        console.print("  No group changes needed.")
 
     _print_summary(stats, dry_run)
+    color = "cyan" if dry_run else "green"
+    for item in changed_creates:
+        console.print(f"  [{color}]+[/{color}] create group {item}")
+    for item in changed_deletes:
+        console.print(f"  [{color}]-[/{color}] delete group {item}")
     return stats
 
 
 def _print_summary(stats: dict, dry_run: bool) -> None:
-    table = Table(title="\nSummary - Groups" + (" (DRY-RUN)" if dry_run else ""))
-    table.add_column("Status", style="bold")
-    table.add_column("Count", justify="right")
+    if dry_run:
+        console.print(
+            f"\n[bold]Plan:[/bold] {stats['created']} to create, {stats['deleted']} to delete, "
+            f"{stats['protected']} protected, {stats['errors']} errors."
+        )
+        return
 
-    table.add_row("Created" if not dry_run else "To create", str(stats["created"]), style="green")
-    table.add_row("Already exist", str(stats["skipped"]), style="yellow")
-    table.add_row("Deleted" if not dry_run else "To delete", str(stats["deleted"]), style="red")
-    table.add_row("Protected (not deleted)", str(stats["protected"]), style="magenta")
-    table.add_row("Errors", str(stats["errors"]), style="red")
-
-    console.print(table)
+    console.print(
+        f"\n[bold green]Apply complete:[/bold green] {stats['created']} created, {stats['deleted']} deleted, "
+        f"{stats['protected']} protected, {stats['errors']} errors."
+    )

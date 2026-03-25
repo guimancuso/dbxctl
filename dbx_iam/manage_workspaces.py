@@ -3,7 +3,6 @@ import logging
 from databricks.sdk import AccountClient
 from databricks.sdk.service import iam
 from rich.console import Console
-from rich.table import Table
 
 from dbx_iam.models import Settings, WorkspaceAssignmentConfig
 
@@ -42,8 +41,10 @@ def sync_workspace_assignments(
     assignments: list[WorkspaceAssignmentConfig],
     settings: Settings,
     dry_run: bool = False,
+    show_unchanged: bool = False,
 ) -> dict:
     stats = {"added": 0, "removed": 0, "skipped": 0, "errors": 0}
+    changed_items: list[str] = []
 
     console.print("\n[bold]Synchronizing workspace assignments...[/bold]\n")
 
@@ -58,15 +59,18 @@ def sync_workspace_assignments(
 
     for assignment in assignments:
         ws_lower = assignment.workspace.lower()
-        console.print(f"  [bold]Workspace: {assignment.workspace}[/bold]")
+        workspace_skipped = 0
+        workspace_added = 0
+        workspace_removed = 0
+        workspace_errors = 0
 
         if ws_lower not in ws_id_map:
-            console.print(f"    [red]ERROR[/red] Workspace '{assignment.workspace}' not found in Account API")
+            console.print(f"  [red]ERROR[/red] workspace {assignment.workspace}: not found in Account API")
             stats["errors"] += 1
+            workspace_errors += 1
             continue
 
         workspace_id = ws_id_map[ws_lower]
-        console.print(f"    workspace_id: {workspace_id}")
 
         # Fetch current assignments for the workspace
         current_assignments: dict[int, list[iam.WorkspacePermission]] = {}
@@ -78,19 +82,19 @@ def sync_workspace_assignments(
                     current_assignments[pid] = pa.permissions or []
                     current_group_names[pid] = pa.principal.group_name
         except Exception as e:
-            console.print(f"    [red]ERROR[/red] Fetching workspace assignments: {e}")
+            console.print(f"  [red]ERROR[/red] workspace {assignment.workspace}: fetching assignments failed: {e}")
             stats["errors"] += 1
+            workspace_errors += 1
             continue
-
-        console.print(f"    Current groups in workspace: {len(current_assignments)}")
 
         # Build desired state: principal_id -> permission
         desired: dict[int, iam.WorkspacePermission] = {}
         for entry in assignment.groups:
             group_lower = entry.group.lower()
             if group_lower not in groups_by_name:
-                console.print(f"    [red]ERROR[/red] Group '{entry.group}' does not exist in Databricks")
+                console.print(f"  [red]ERROR[/red] workspace {assignment.workspace}: group '{entry.group}' does not exist in Databricks")
                 stats["errors"] += 1
+                workspace_errors += 1
                 continue
 
             group_id_str, group_display = groups_by_name[group_lower]
@@ -102,14 +106,19 @@ def sync_workspace_assignments(
             if principal_id in current_assignments:
                 current_perms = current_assignments[principal_id]
                 if desired_perm in current_perms:
-                    console.print(f"    [yellow]SKIP[/yellow]    {group_display} ({entry.permission}, already assigned)")
+                    if show_unchanged:
+                        console.print(f"    [yellow]SKIP[/yellow]    {group_display} ({entry.permission}, already assigned)")
                     stats["skipped"] += 1
+                    workspace_skipped += 1
                     continue
 
             # Add or update
             if dry_run:
-                console.print(f"    [cyan]DRY-RUN[/cyan] Would assign: {group_display} ({entry.permission})")
                 stats["added"] += 1
+                workspace_added += 1
+                changed_items.append(
+                    f"+ workspace {assignment.workspace}: assign {group_display} ({entry.permission})"
+                )
                 continue
 
             try:
@@ -119,10 +128,14 @@ def sync_workspace_assignments(
                     permissions=[desired_perm],
                 )
                 stats["added"] += 1
-                console.print(f"    [green]ADDED[/green]   {group_display} ({entry.permission})")
+                workspace_added += 1
+                changed_items.append(
+                    f"+ workspace {assignment.workspace}: assign {group_display} ({entry.permission})"
+                )
             except Exception as e:
                 stats["errors"] += 1
-                console.print(f"    [red]ERROR[/red]   {group_display}: {e}")
+                workspace_errors += 1
+                console.print(f"  [red]ERROR[/red] workspace {assignment.workspace}: assigning '{group_display}' failed: {e}")
                 logger.error("Error assigning %s to workspace %s: %s", group_display, assignment.workspace, e)
 
         # Remove groups that are in the workspace but not in the YAML
@@ -133,8 +146,9 @@ def sync_workspace_assignments(
                 continue
 
             if dry_run:
-                console.print(f"    [cyan]DRY-RUN[/cyan] Would remove: {group_name}")
                 stats["removed"] += 1
+                workspace_removed += 1
+                changed_items.append(f"- workspace {assignment.workspace}: remove {group_name}")
                 continue
 
             try:
@@ -143,26 +157,45 @@ def sync_workspace_assignments(
                     principal_id=pid,
                 )
                 stats["removed"] += 1
-                console.print(f"    [red]REMOVED[/red] {group_name}")
+                workspace_removed += 1
+                changed_items.append(f"- workspace {assignment.workspace}: remove {group_name}")
             except Exception as e:
                 stats["errors"] += 1
-                console.print(f"    [red]ERROR[/red]   Removing {group_name}: {e}")
+                workspace_errors += 1
+                console.print(f"  [red]ERROR[/red] workspace {assignment.workspace}: removing '{group_name}' failed: {e}")
                 logger.error("Error removing %s from workspace %s: %s", group_name, assignment.workspace, e)
 
-        console.print()
+        if workspace_added or workspace_removed or workspace_errors or show_unchanged:
+            parts = []
+            if workspace_added:
+                parts.append(f"{'to assign' if dry_run else 'assigned'}={workspace_added}")
+            if workspace_removed:
+                parts.append(f"{'to remove' if dry_run else 'removed'}={workspace_removed}")
+            if workspace_errors:
+                parts.append(f"errors={workspace_errors}")
+            if workspace_skipped and show_unchanged:
+                parts.append(f"unchanged={workspace_skipped}")
+            if not parts:
+                parts.append("no changes")
+            prefix = "PLAN" if dry_run and (workspace_added or workspace_removed) else "WORKSPACE"
+            console.print(f"  [bold]{prefix}[/bold] {assignment.workspace}: " + ", ".join(parts))
 
     _print_summary(stats, dry_run)
+    color = "cyan" if dry_run else "green"
+    for item in changed_items:
+        console.print(f"  [{color}]{item}[/{color}]")
     return stats
 
 
 def _print_summary(stats: dict, dry_run: bool) -> None:
-    table = Table(title="\nSummary - Workspace Assignments" + (" (DRY-RUN)" if dry_run else ""))
-    table.add_column("Status", style="bold")
-    table.add_column("Count", justify="right")
+    if dry_run:
+        console.print(
+            f"\n[bold]Plan:[/bold] {stats['added']} to assign, {stats['removed']} to remove, "
+            f"{stats['errors']} errors."
+        )
+        return
 
-    table.add_row("Assigned" if not dry_run else "To assign", str(stats["added"]), style="green")
-    table.add_row("Removed" if not dry_run else "To remove", str(stats["removed"]), style="red")
-    table.add_row("Already assigned", str(stats["skipped"]), style="yellow")
-    table.add_row("Errors", str(stats["errors"]), style="red")
-
-    console.print(table)
+    console.print(
+        f"\n[bold green]Apply complete:[/bold green] {stats['added']} assigned, {stats['removed']} removed, "
+        f"{stats['errors']} errors."
+    )

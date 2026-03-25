@@ -140,15 +140,29 @@ groups:
 
 ### Arquivos de Membership
 
-Localizados em `config/memberships/`. Cada arquivo e nomeado com o nome do grupo (ex: `GRP-ENGENHARIA-DADOS.yaml`) e contem a lista de emails dos membros.
+Localizados em `config/memberships/`. Cada arquivo e nomeado com o nome do grupo (ex: `GRP-ENGENHARIA-DADOS.yaml`) e define os membros desejados.
 
 ```yaml
 # config/memberships/GRP-ENGENHARIA-DADOS.yaml
-- joao.silva@empresa.com
-- maria.santos@empresa.com
+users:
+  - joao.silva@empresa.com
+  - maria.santos@empresa.com
+
+groups:
+  - GRP-ANALISTAS-DADOS
+
+service_principals:
+  - 11111111-2222-3333-4444-555555555555
 ```
 
 O nome do grupo e derivado do nome do arquivo (sem a extensao `.yaml`).
+O formato legado com lista simples de emails de usuarios continua sendo suportado por compatibilidade.
+
+| Campo | Obrigatorio | Descricao |
+|-------|-------------|-----------|
+| `users` | Nao | Lista de emails de usuarios. Cada email deve existir em `users.yaml`. |
+| `groups` | Nao | Lista de nomes de grupos para incluir como membros aninhados. Cada grupo deve existir em `groups.yaml`. |
+| `service_principals` | Nao | Lista dos `application_id` de service principals do Databricks (formato UUID). |
 
 ### Arquivos de Workspace Assignment
 
@@ -185,6 +199,7 @@ Verificacoes realizadas:
 - Deteccao de duplicatas (emails, grupos, membros)
 - Referencia cruzada: emails de membership existem em users.yaml
 - Referencia cruzada: grupos de membership existem em groups.yaml
+- Validacao: `application_id` de service principals em membership devem estar em formato UUID
 - Referencia cruzada: grupos de workspace existem em groups.yaml
 - Referencia cruzada: nomes de workspace correspondem a settings.yaml
 
