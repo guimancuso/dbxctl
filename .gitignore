@@ -27,5 +27,5 @@ uv.lock
 .env
 .env.*
 
-# Configuration (contains real credentials and user data)
-config/
+# Company identity definitions stay local/private
+identity-definitions/

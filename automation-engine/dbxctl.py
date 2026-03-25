@@ -1,6 +1,8 @@
 import argparse
 import logging
+import os
 import sys
+from pathlib import Path
 
 from rich.console import Console
 
@@ -8,6 +10,7 @@ from dbx_iam.client import get_account_client
 from dbx_iam.config_loader import (
     load_groups,
     load_memberships,
+    resolve_config_dir,
     load_settings,
     load_users,
     load_workspace_assignments,
@@ -21,10 +24,14 @@ from dbx_iam.manage_workspaces import sync_workspace_assignments
 console = Console()
 
 
-def _run_validation() -> bool:
+def _get_config_dir(args: argparse.Namespace) -> Path:
+    return resolve_config_dir(args.config_dir or os.environ.get("DBXCTL_CONFIG_DIR"))
+
+
+def _run_validation(config_dir: Path) -> bool:
     """Run cross-validation of YAML files. Returns True if OK, False if there are errors."""
-    console.print("[bold]Validating configuration...[/bold]\n")
-    result = validate_all()
+    console.print(f"[bold]Validating configuration in {config_dir}...[/bold]\n")
+    result = validate_all(config_dir)
     result.print_report()
 
     if result.has_errors:
@@ -38,17 +45,18 @@ def _run_validation() -> bool:
 
 
 def cmd_validate(args: argparse.Namespace) -> None:
-    ok = _run_validation()
+    ok = _run_validation(_get_config_dir(args))
     if not ok:
         sys.exit(1)
 
 
 def cmd_users(args: argparse.Namespace) -> None:
-    if not _run_validation():
+    config_dir = _get_config_dir(args)
+    if not _run_validation(config_dir):
         sys.exit(1)
-    settings = load_settings()
+    settings = load_settings(config_dir)
     client = get_account_client(settings)
-    users = load_users()
+    users = load_users(config_dir)
     sync_users(
         client,
         users,
@@ -59,12 +67,13 @@ def cmd_users(args: argparse.Namespace) -> None:
 
 
 def cmd_groups(args: argparse.Namespace) -> None:
-    if not _run_validation():
+    config_dir = _get_config_dir(args)
+    if not _run_validation(config_dir):
         sys.exit(1)
-    settings = load_settings()
+    settings = load_settings(config_dir)
     client = get_account_client(settings)
-    groups = load_groups()
-    memberships = load_memberships()
+    groups = load_groups(config_dir)
+    memberships = load_memberships(config_dir)
     sync_groups(
         client, groups,
         memberships=memberships,
@@ -75,20 +84,22 @@ def cmd_groups(args: argparse.Namespace) -> None:
 
 
 def cmd_members(args: argparse.Namespace) -> None:
-    if not _run_validation():
+    config_dir = _get_config_dir(args)
+    if not _run_validation(config_dir):
         sys.exit(1)
-    settings = load_settings()
+    settings = load_settings(config_dir)
     client = get_account_client(settings)
-    memberships = load_memberships()
+    memberships = load_memberships(config_dir)
     sync_memberships(client, memberships, dry_run=args.dry_run, show_unchanged=args.verbose)
 
 
 def cmd_workspaces(args: argparse.Namespace) -> None:
-    if not _run_validation():
+    config_dir = _get_config_dir(args)
+    if not _run_validation(config_dir):
         sys.exit(1)
-    settings = load_settings()
+    settings = load_settings(config_dir)
     client = get_account_client(settings)
-    assignments = load_workspace_assignments()
+    assignments = load_workspace_assignments(config_dir)
     sync_workspace_assignments(
         client,
         assignments,
@@ -99,15 +110,16 @@ def cmd_workspaces(args: argparse.Namespace) -> None:
 
 
 def cmd_sync(args: argparse.Namespace) -> None:
-    if not _run_validation():
+    config_dir = _get_config_dir(args)
+    if not _run_validation(config_dir):
         sys.exit(1)
 
-    settings = load_settings()
+    settings = load_settings(config_dir)
     client = get_account_client(settings)
-    groups = load_groups()
-    users = load_users()
-    memberships = load_memberships()
-    assignments = load_workspace_assignments()
+    groups = load_groups(config_dir)
+    users = load_users(config_dir)
+    memberships = load_memberships(config_dir)
+    assignments = load_workspace_assignments(config_dir)
 
     # Order: create groups -> create users -> reconcile memberships
     # -> assign groups to workspaces
@@ -155,35 +167,61 @@ def main() -> None:
         action="store_true",
         help="Enable detailed logging (DEBUG) and show unchanged items",
     )
+    parser.add_argument(
+        "--config-dir",
+        help="Configuration directory. Defaults to ../identity-definitions or DBXCTL_CONFIG_DIR if set.",
+    )
+
+    common_parser = argparse.ArgumentParser(add_help=False)
+    common_parser.add_argument(
+        "--config-dir",
+        help="Configuration directory. Defaults to ../identity-definitions or DBXCTL_CONFIG_DIR if set.",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # validate
-    p_validate = subparsers.add_parser("validate", help="Validate configuration (no API calls)")
+    p_validate = subparsers.add_parser(
+        "validate",
+        help="Validate configuration (no API calls)",
+        parents=[common_parser],
+    )
     p_validate.set_defaults(func=cmd_validate)
 
     # users
-    p_users = subparsers.add_parser("users", help="Synchronize users")
+    p_users = subparsers.add_parser("users", help="Synchronize users", parents=[common_parser])
     p_users.add_argument("--dry-run", action="store_true", help="Simulate without executing")
     p_users.set_defaults(func=cmd_users)
 
     # groups
-    p_groups = subparsers.add_parser("groups", help="Synchronize groups")
+    p_groups = subparsers.add_parser("groups", help="Synchronize groups", parents=[common_parser])
     p_groups.add_argument("--dry-run", action="store_true", help="Simulate without executing")
     p_groups.set_defaults(func=cmd_groups)
 
     # members
-    p_members = subparsers.add_parser("members", help="Synchronize memberships")
+    p_members = subparsers.add_parser(
+        "members",
+        help="Synchronize memberships",
+        parents=[common_parser],
+    )
     p_members.add_argument("--dry-run", action="store_true", help="Simulate without executing")
     p_members.set_defaults(func=cmd_members)
 
     # workspaces
-    p_workspaces = subparsers.add_parser("workspaces", help="Synchronize group-to-workspace assignments")
+    p_workspaces = subparsers.add_parser(
+        "workspaces",
+        help="Synchronize group-to-workspace assignments",
+        parents=[common_parser],
+    )
     p_workspaces.add_argument("--dry-run", action="store_true", help="Simulate without executing")
     p_workspaces.set_defaults(func=cmd_workspaces)
 
     # sync
-    p_sync = subparsers.add_parser("sync", help="Synchronize everything (create, reconcile, and remove)")
+    p_sync = subparsers.add_parser(
+        "sync",
+        help="Synchronize everything (create, reconcile, and remove)",
+        parents=[common_parser],
+    )
     p_sync.add_argument("--dry-run", action="store_true", help="Simulate without executing")
     p_sync.set_defaults(func=cmd_sync)
 

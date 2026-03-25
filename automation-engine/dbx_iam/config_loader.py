@@ -17,7 +17,7 @@ from dbx_iam.models import (
     WorkspaceSettings,
 )
 
-CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "identity-definitions"
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 GROUP_NAME_REGEX = re.compile(r"^[a-zA-Z0-9._-]+$")
@@ -31,6 +31,30 @@ UUID_REGEX = re.compile(
 GROUP_MEMBER_PREFIXES = ("GRP-", "ROLE-", "SVC-")
 
 console = Console()
+
+
+def _settings_path(config_dir: Path) -> Path:
+    return config_dir / "account" / "settings.yaml"
+
+
+def _users_path(config_dir: Path) -> Path:
+    return config_dir / "principals" / "users.yaml"
+
+
+def _groups_path(config_dir: Path) -> Path:
+    return config_dir / "principals" / "groups.yaml"
+
+
+def _memberships_dir(config_dir: Path) -> Path:
+    return config_dir / "memberships"
+
+
+def _workspace_access_dir(config_dir: Path) -> Path:
+    return config_dir / "workspace-access"
+
+
+def _membership_files(memberships_dir: Path) -> list[Path]:
+    return sorted(path for path in memberships_dir.rglob("*.yaml") if path.is_file())
 
 
 @dataclass
@@ -80,6 +104,12 @@ class ValidationResult:
         console.print(f"\n  Errors: {len(self.errors)}  |  Warnings: {len(self.warnings)}\n")
 
 
+def resolve_config_dir(config_dir: str | Path | None = None) -> Path:
+    if config_dir is None:
+        return DEFAULT_CONFIG_DIR
+    return Path(config_dir).expanduser().resolve()
+
+
 def _check_file_exists(path: Path, result: ValidationResult) -> bool:
     if not path.exists():
         result.error(str(path.name), f"File not found: {path}")
@@ -103,8 +133,9 @@ def _check_yaml_loadable(path: Path, result: ValidationResult) -> dict | None:
         return None
 
 
-def load_settings(config_dir: Path = CONFIG_DIR) -> Settings:
-    path = config_dir / "settings.yaml"
+def load_settings(config_dir: str | Path | None = None) -> Settings:
+    config_dir = resolve_config_dir(config_dir)
+    path = _settings_path(config_dir)
     if not path.exists():
         raise FileNotFoundError(f"Settings file not found: {path}")
 
@@ -112,15 +143,15 @@ def load_settings(config_dir: Path = CONFIG_DIR) -> Settings:
         data = yaml.safe_load(f)
 
     if not data or "account" not in data:
-        raise ValueError("settings.yaml must contain the 'account' key")
+        raise ValueError("account/settings.yaml must contain the 'account' key")
 
     acct = data["account"]
     for key in ("host", "account_id", "profile"):
         if key not in acct or not acct[key]:
-            raise ValueError(f"settings.yaml: account.{key} is required")
+            raise ValueError(f"account/settings.yaml: account.{key} is required")
 
     if "<" in acct.get("host", "") or "<" in acct.get("account_id", ""):
-        raise ValueError("settings.yaml: replace the placeholders (<...>) with actual values")
+        raise ValueError("account/settings.yaml: replace the placeholders (<...>) with actual values")
 
     account = AccountSettings(
         host=acct["host"],
@@ -132,7 +163,7 @@ def load_settings(config_dir: Path = CONFIG_DIR) -> Settings:
     for i, ws in enumerate(data.get("workspaces", [])):
         for key in ("name", "host", "profile"):
             if key not in ws or not ws[key]:
-                raise ValueError(f"settings.yaml: workspaces[{i}].{key} is required")
+                raise ValueError(f"account/settings.yaml: workspaces[{i}].{key} is required")
         workspaces.append(
             WorkspaceSettings(name=ws["name"], host=ws["host"], profile=ws["profile"])
         )
@@ -148,8 +179,9 @@ def load_settings(config_dir: Path = CONFIG_DIR) -> Settings:
     )
 
 
-def load_users(config_dir: Path = CONFIG_DIR) -> list[UserConfig]:
-    path = config_dir / "users.yaml"
+def load_users(config_dir: str | Path | None = None) -> list[UserConfig]:
+    config_dir = resolve_config_dir(config_dir)
+    path = _users_path(config_dir)
     if not path.exists():
         raise FileNotFoundError(f"Users file not found: {path}")
 
@@ -157,16 +189,18 @@ def load_users(config_dir: Path = CONFIG_DIR) -> list[UserConfig]:
         data = yaml.safe_load(f)
 
     if not data or "users" not in data:
-        raise ValueError("users.yaml must contain the 'users' key")
+        raise ValueError("principals/users.yaml must contain the 'users' key")
 
     users = []
     for i, u in enumerate(data["users"]):
         if "email" not in u or not u["email"]:
-            raise ValueError(f"users.yaml: users[{i}] missing 'email' field")
+            raise ValueError(f"principals/users.yaml: users[{i}] missing 'email' field")
         if "display_name" not in u or not u["display_name"]:
-            raise ValueError(f"users.yaml: users[{i}] ({u.get('email', '?')}) missing 'display_name' field")
+            raise ValueError(
+                f"principals/users.yaml: users[{i}] ({u.get('email', '?')}) missing 'display_name' field"
+            )
         if not EMAIL_REGEX.match(u["email"]):
-            raise ValueError(f"users.yaml: invalid email '{u['email']}'")
+            raise ValueError(f"principals/users.yaml: invalid email '{u['email']}'")
         users.append(UserConfig(email=u["email"], display_name=u["display_name"]))
 
     seen: set[str] = set()
@@ -177,13 +211,14 @@ def load_users(config_dir: Path = CONFIG_DIR) -> list[UserConfig]:
             duplicates.add(u.email)
         seen.add(lower)
     if duplicates:
-        raise ValueError(f"Duplicate emails in users.yaml: {duplicates}")
+        raise ValueError(f"Duplicate emails in principals/users.yaml: {duplicates}")
 
     return users
 
 
-def load_groups(config_dir: Path = CONFIG_DIR) -> list[GroupConfig]:
-    path = config_dir / "groups.yaml"
+def load_groups(config_dir: str | Path | None = None) -> list[GroupConfig]:
+    config_dir = resolve_config_dir(config_dir)
+    path = _groups_path(config_dir)
     if not path.exists():
         raise FileNotFoundError(f"Groups file not found: {path}")
 
@@ -191,15 +226,15 @@ def load_groups(config_dir: Path = CONFIG_DIR) -> list[GroupConfig]:
         data = yaml.safe_load(f)
 
     if not data or "groups" not in data:
-        raise ValueError("groups.yaml must contain the 'groups' key")
+        raise ValueError("principals/groups.yaml must contain the 'groups' key")
 
     groups = []
     for i, g in enumerate(data["groups"]):
         if "name" not in g or not g["name"]:
-            raise ValueError(f"groups.yaml: groups[{i}] missing 'name' field")
+            raise ValueError(f"principals/groups.yaml: groups[{i}] missing 'name' field")
         if not re.match(r"^[a-zA-Z0-9._-]+$", g["name"]):
             raise ValueError(
-                f"groups.yaml: invalid group name '{g['name']}' "
+                f"principals/groups.yaml: invalid group name '{g['name']}' "
                 "(use only letters, numbers, dots, hyphens, and underscores)"
             )
         groups.append(
@@ -214,18 +249,19 @@ def load_groups(config_dir: Path = CONFIG_DIR) -> list[GroupConfig]:
             duplicates.add(g.name)
         seen.add(lower)
     if duplicates:
-        raise ValueError(f"Duplicate groups in groups.yaml: {duplicates}")
+        raise ValueError(f"Duplicate groups in principals/groups.yaml: {duplicates}")
 
     return groups
 
 
-def load_memberships(config_dir: Path = CONFIG_DIR) -> list[MembershipConfig]:
-    memberships_dir = config_dir / "memberships"
+def load_memberships(config_dir: str | Path | None = None) -> list[MembershipConfig]:
+    config_dir = resolve_config_dir(config_dir)
+    memberships_dir = _memberships_dir(config_dir)
     if not memberships_dir.exists():
         return []
 
     memberships = []
-    for filepath in sorted(memberships_dir.glob("*.yaml")):
+    for filepath in _membership_files(memberships_dir):
         with open(filepath) as f:
             data = yaml.safe_load(f)
 
@@ -359,8 +395,9 @@ def _parse_group_entry(entry, filepath: Path, index: int) -> WorkspaceGroupEntry
     return WorkspaceGroupEntry(group=entry["group"], permission=permission)
 
 
-def load_workspace_assignments(config_dir: Path = CONFIG_DIR) -> list[WorkspaceAssignmentConfig]:
-    workspaces_dir = config_dir / "workspaces"
+def load_workspace_assignments(config_dir: str | Path | None = None) -> list[WorkspaceAssignmentConfig]:
+    config_dir = resolve_config_dir(config_dir)
+    workspaces_dir = _workspace_access_dir(config_dir)
     if not workspaces_dir.exists():
         return []
 
@@ -399,29 +436,33 @@ def load_workspace_assignments(config_dir: Path = CONFIG_DIR) -> list[WorkspaceA
     return assignments
 
 
-def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
+def validate_all(config_dir: str | Path | None = None) -> ValidationResult:
     """Cross-validate all YAML files before calling the API."""
+    config_dir = resolve_config_dir(config_dir)
     result = ValidationResult()
 
     # 1. Check if files exist
-    settings_ok = _check_file_exists(config_dir / "settings.yaml", result)
-    users_ok = _check_file_exists(config_dir / "users.yaml", result)
-    groups_ok = _check_file_exists(config_dir / "groups.yaml", result)
+    settings_path = _settings_path(config_dir)
+    users_path = _users_path(config_dir)
+    groups_path = _groups_path(config_dir)
+    settings_ok = _check_file_exists(settings_path, result)
+    users_ok = _check_file_exists(users_path, result)
+    groups_ok = _check_file_exists(groups_path, result)
 
     # 2. Load settings
     known_workspaces: set[str] = set()
     if settings_ok:
-        data = _check_yaml_loadable(config_dir / "settings.yaml", result)
+        data = _check_yaml_loadable(settings_path, result)
         if data:
             acct = data.get("account", {})
             for key in ("host", "account_id", "profile"):
                 if not acct.get(key):
-                    result.error("settings.yaml", f"account.{key} not defined")
+                    result.error("account/settings.yaml", f"account.{key} not defined")
             if "<" in acct.get("host", "") or "<" in acct.get("account_id", ""):
-                result.error("settings.yaml", "Placeholders (<...>) not replaced")
+                result.error("account/settings.yaml", "Placeholders (<...>) not replaced")
             for i, ws in enumerate(data.get("workspaces", [])):
                 if "<" in ws.get("host", ""):
-                    result.warning("settings.yaml", f"workspaces[{i}].host contains placeholder")
+                    result.warning("account/settings.yaml", f"workspaces[{i}].host contains placeholder")
                 if ws.get("name"):
                     known_workspaces.add(ws["name"].lower())
 
@@ -432,7 +473,7 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
             users = load_users(config_dir)
             known_emails = {u.email.lower(): u.email for u in users}
         except ValueError as e:
-            result.error("users.yaml", str(e))
+            result.error("principals/users.yaml", str(e))
 
     # 4. Load groups
     known_groups: dict[str, str] = {}
@@ -441,17 +482,17 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
             groups = load_groups(config_dir)
             known_groups = {g.name.lower(): g.name for g in groups}
         except ValueError as e:
-            result.error("groups.yaml", str(e))
+            result.error("principals/groups.yaml", str(e))
 
     # 5. Validate memberships with cross-reference
-    memberships_dir = config_dir / "memberships"
+    memberships_dir = _memberships_dir(config_dir)
     if not memberships_dir.exists():
         result.warning("memberships/", "Memberships directory does not exist")
-    elif not sorted(memberships_dir.glob("*.yaml")):
+    elif not _membership_files(memberships_dir):
         result.warning("memberships/", "No membership files found")
 
     all_membership_groups: set[str] = set()
-    yaml_files = sorted(memberships_dir.glob("*.yaml")) if memberships_dir.exists() else []
+    yaml_files = _membership_files(memberships_dir) if memberships_dir.exists() else []
     for filepath in yaml_files:
         fname = filepath.name
         group_name = filepath.stem
@@ -551,7 +592,7 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
             )
 
     # 7. Validate workspace assignments with cross-reference
-    workspaces_dir = config_dir / "workspaces"
+    workspaces_dir = _workspace_access_dir(config_dir)
     if not workspaces_dir.exists():
         return result
 
@@ -574,7 +615,7 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
         if known_workspaces and ws_name.lower() not in known_workspaces:
             result.error(
                 fname,
-                f"Workspace '{ws_name}' is not defined in settings.yaml",
+                f"Workspace '{ws_name}' is not defined in account/settings.yaml",
             )
 
         if not data or not isinstance(data, list):
@@ -623,8 +664,8 @@ def validate_all(config_dir: Path = CONFIG_DIR) -> ValidationResult:
     for ws_name in known_workspaces:
         if ws_name not in assigned_workspaces:
             result.warning(
-                "workspaces/",
-                f"Workspace '{ws_name}' defined in settings.yaml but has no assignment file",
+                "workspace-access/",
+                f"Workspace '{ws_name}' defined in account/settings.yaml but has no assignment file",
             )
 
     return result

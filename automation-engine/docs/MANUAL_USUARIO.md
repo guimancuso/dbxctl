@@ -52,7 +52,7 @@ Recursos que nao estao presentes nos arquivos YAML sao removidos (a menos que es
 ```bash
 # Clone o repositorio
 git clone <url-do-repositorio>
-cd dbxctl
+cd <nome-do-repositorio>/automation-engine
 
 # Instalar dependencias e o projeto
 uv sync
@@ -62,9 +62,9 @@ Apos a instalacao, o comando `dbxctl` estara disponivel no seu PATH.
 
 ## Configuracao
 
-Todos os arquivos de configuracao ficam no diretorio `config/`.
+Por padrao, todos os arquivos de definicao de identidade ficam no diretorio irmao `../identity-definitions/`. Na versao publica do GitHub, use `../identity-definitions.example/` como modelo e copie para `../identity-definitions/` antes de executar a ferramenta. Se voce preferir manter as definicoes em outro caminho ou em outro repositorio, use `--config-dir` ou a variavel de ambiente `DBXCTL_CONFIG_DIR`.
 
-### settings.yaml
+### account/settings.yaml
 
 Arquivo de configuracao principal com credenciais da conta, definicoes de workspace e listas de protecao.
 
@@ -102,7 +102,15 @@ protected_groups:
 | `protected_emails` | Nao | Lista de emails que nunca serao excluidos |
 | `protected_groups` | Nao | Lista de nomes de grupos que nunca serao excluidos |
 
-### users.yaml
+Exemplo usando outro diretorio de configuracao:
+
+```bash
+cp -R ../identity-definitions.example ../identity-definitions
+dbxctl validate --config-dir /caminho/para/identity-definitions
+DBXCTL_CONFIG_DIR=/caminho/para/identity-definitions dbxctl sync --dry-run
+```
+
+### principals/users.yaml
 
 Define todos os usuarios a serem gerenciados na conta Databricks.
 
@@ -119,7 +127,7 @@ users:
 | `email` | Sim | Email do usuario (deve ser um formato valido) |
 | `display_name` | Sim | Nome de exibicao do usuario no Databricks |
 
-### groups.yaml
+### principals/groups.yaml
 
 Define todos os grupos a serem gerenciados.
 
@@ -140,10 +148,16 @@ groups:
 
 ### Arquivos de Membership
 
-Localizados em `config/memberships/`. Cada arquivo e nomeado com o nome do grupo (ex: `GRP-ENGENHARIA-DADOS.yaml`) e define os membros desejados.
+Localizados dentro de `identity-definitions/memberships/`. Cada arquivo e nomeado com o nome do grupo (ex: `GRP-ENGENHARIA-DADOS.yaml`) e define os membros desejados.
+
+Subpastas recomendadas:
+- `memberships/business/` para grupos funcionais e de negocio
+- `memberships/roles/` para grupos `ROLE-*`
+- `memberships/workspace/` para grupos de administracao de workspace
+- `memberships/service-principals/` para futuros grupos orientados a service principals
 
 ```yaml
-# config/memberships/GRP-ENGENHARIA-DADOS.yaml
+# identity-definitions/memberships/business/GRP-ENGENHARIA-DADOS.yaml
 users:
   - joao.silva@empresa.com
   - maria.santos@empresa.com
@@ -166,10 +180,10 @@ O formato legado com lista simples de emails de usuarios continua sendo suportad
 
 ### Arquivos de Workspace Assignment
 
-Localizados em `config/workspaces/`. Cada arquivo e nomeado com o nome do workspace (ex: `production.yaml`) e define quais grupos tem acesso e com qual nivel de permissao.
+Localizados em `identity-definitions/workspace-access/`. Cada arquivo e nomeado com o nome do workspace (ex: `production.yaml`) e define quais grupos tem acesso e com qual nivel de permissao.
 
 ```yaml
-# config/workspaces/production.yaml
+# identity-definitions/workspace-access/production.yaml
 - group: GRP-ENGENHARIA-DADOS
   permission: USER
 
@@ -313,26 +327,27 @@ dbxctl -v sync --dry-run
 
 ### Estrutura de diretorios
 
-```
-dbxctl/
-├── config/
-│   ├── settings.yaml
-│   ├── users.yaml
-│   ├── groups.yaml
-│   ├── memberships/
-│   │   ├── GRP-ENGENHARIA-DADOS.yaml
-│   │   └── GRP-ANALISTAS-DADOS.yaml
-│   └── workspaces/
-│       ├── production.yaml
-│       └── development.yaml
-├── dbx_iam/
-│   ├── client.py
-│   ├── config_loader.py
-│   ├── manage_groups.py
-│   ├── manage_memberships.py
-│   ├── manage_users.py
-│   ├── manage_workspaces.py
-│   └── models.py
-├── dbxctl.py
-└── pyproject.toml
+```text
+raiz-do-repositorio/
+├── automation-engine/
+│   ├── dbx_iam/
+│   ├── dbxctl.py
+│   ├── docs/
+│   └── pyproject.toml
+└── identity-definitions/
+    ├── account/
+    │   └── settings.yaml
+    ├── principals/
+    │   ├── users.yaml
+    │   └── groups.yaml
+    ├── memberships/
+    │   ├── business/
+    │   │   ├── GRP-ENGENHARIA-DADOS.yaml
+    │   │   └── GRP-ANALISTAS-DADOS.yaml
+    │   ├── roles/
+    │   ├── service-principals/
+    │   └── workspace/
+    └── workspace-access/
+        ├── production.yaml
+        └── development.yaml
 ```
